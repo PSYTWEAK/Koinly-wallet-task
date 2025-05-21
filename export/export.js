@@ -4,6 +4,7 @@ const { createObjectCsvWriter } = require('csv-writer');
 const fs = require('fs');
 const path = require('path');
 const { baseUrl, apiKey, chains } = require('./chains');
+const Decimal = require('decimal.js');
 
 // CONFIG
 const walletAddress = '0xf23649b5DF0E12BA04c6fa1874B03265f79C636B';
@@ -52,7 +53,10 @@ async function fetchEvents(cfg, address) {
     const isSender = tx.from.toLowerCase() === address.toLowerCase();
     const gasUsed = Number(tx.gasUsed || 0);
     const gasPrice = Number(tx.gasPrice || 0);
-    const gasCostEth = isSender ? (gasUsed * gasPrice) / 1e18 : 0;
+    const gasCostEth = isSender
+  ? new Decimal(gasUsed).mul(gasPrice).div('1e18').toFixed(18)
+  : '0.000000000000000000';
+
   
     // Add failed txs with 0 value, but keep the gas cost
     const isFailed = tx.isError === '1';
@@ -66,9 +70,11 @@ async function fetchEvents(cfg, address) {
       direction: isSender ? 'send' : 'receive',
       from: tx.from,
       to: tx.to,
-      value: isFailed ? 0 : Number(tx.value) / 1e18,
+      value: isFailed
+  ? '0.000000000000000000'
+  : new Decimal(tx.value).div('1e18').toFixed(18),
       blockNumber: Number(tx.blockNumber),
-      gasCost: gasCostEth.toFixed(8)
+      gasCost: gasCostEth
     });
   });
   
