@@ -2,13 +2,21 @@ const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const { createObjectCsvWriter } = require('csv-writer');
-const Decimal = require('decimal.js');
+const { parseUnits, formatUnits } = require('ethers');
 
 const dir = path.join(__dirname, 'exportedTransactions');
 const files = fs.readdirSync(dir).filter(f => f.endsWith('-ledger.csv'));
 
 const balances = {};
 const OUR_ADDRESS = '0xf23649b5df0e12ba04c6fa1874b03265f79c636b';
+
+function toBigInt(val) {
+  try {
+    return parseUnits(val || '0', 18);
+  } catch {
+    return 0n;
+  }
+}
 
 function processFile(file) {
   return new Promise((resolve, reject) => {
@@ -24,19 +32,19 @@ function processFile(file) {
           if (/[!#$]/.test(token)) return;
           const label = `${token} (${capitalize(chain)})`;
 
-          const val = row.Value ? new Decimal(row.Value) : new Decimal(0);
-          const gas = row.GasCost ? new Decimal(row.GasCost) : new Decimal(0);
+          const val = toBigInt(row.Value);
+          const gas = toBigInt(row.GasCost);
 
-          if (!direction || !val.isFinite()) {
+          if (!direction) {
             console.warn(`⚠️ Skipping invalid row in ${file}:`, row);
             return;
           }
 
           if (direction === 'receive' && to === OUR_ADDRESS) {
-            balances[label] = (balances[label] || new Decimal(0)).plus(val);
+            balances[label] = (balances[label] || 0n) + val;
           } else if (direction === 'send' && from === OUR_ADDRESS) {
-            const totalCost = token === 'Ether' ? val.plus(gas) : val;
-            balances[label] = (balances[label] || new Decimal(0)).minus(totalCost);
+            const totalCost = token === 'Ether' ? val + gas : val;
+            balances[label] = (balances[label] || 0n) - totalCost;
           }
         } catch (err) {
           console.warn(`⚠️ Error processing row in ${file}:`, row, err);
@@ -60,17 +68,18 @@ async function compute() {
   console.log('\n📊 Final Balances:\n');
 
   const filtered = Object.entries(balances)
-    .filter(([token, amount]) => amount.abs().gte(0.0001) && !/[!#$]/.test(token));
+    .filter(([token, amount]) =>
+      amount !== 0n && !/[!#$]/.test(token));
 
   const etherEntries = filtered.filter(([token]) => token.startsWith('Ether '))
-    .sort(([, aAmt], [, bAmt]) => bAmt.abs().cmp(aAmt.abs()));
+    .sort(([, aAmt], [, bAmt]) => (bAmt > aAmt ? 1 : -1));
   const others = filtered.filter(([token]) => !token.startsWith('Ether '))
-    .sort(([, aAmt], [, bAmt]) => bAmt.abs().cmp(aAmt.abs()));
+    .sort(([, aAmt], [, bAmt]) => (bAmt > aAmt ? 1 : -1));
 
   const sorted = [...etherEntries, ...others];
 
   sorted.forEach(([token, amount]) => {
-    console.log(`${token}: ${amount.toFixed(18)}`);
+    console.log(`${token}: ${formatUnits(amount, 18)}`);
   });
 
   const writer = createObjectCsvWriter({
@@ -83,7 +92,7 @@ async function compute() {
 
   const rows = sorted.map(([token, amount]) => ({
     token,
-    amount: amount.toFixed(18)
+    amount: formatUnits(amount, 18)
   }));
 
   await writer.writeRecords(rows);

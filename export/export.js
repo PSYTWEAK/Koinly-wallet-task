@@ -3,8 +3,8 @@ const axios = require('axios');
 const { createObjectCsvWriter } = require('csv-writer');
 const fs = require('fs');
 const path = require('path');
+const { parseUnits, formatUnits } = require('ethers');
 const { baseUrl, apiKey, chains } = require('./chains');
-const Decimal = require('decimal.js');
 
 // CONFIG
 const walletAddress = '0xf23649b5DF0E12BA04c6fa1874B03265f79C636B';
@@ -51,16 +51,16 @@ async function fetchEvents(cfg, address) {
   // Normalize ETH transactions
   ethTxs.concat(internalTxs).forEach(tx => {
     const isSender = tx.from.toLowerCase() === address.toLowerCase();
-    const gasUsed = Number(tx.gasUsed || 0);
-    const gasPrice = Number(tx.gasPrice || 0);
-    const gasCostEth = isSender
-  ? new Decimal(gasUsed).mul(gasPrice).div('1e18').toFixed(18)
-  : '0.000000000000000000';
+    const gasUsed = BigInt(tx.gasUsed || '0');
+    const gasPrice = BigInt(tx.gasPrice || '0');
+    const gasCostWei = gasUsed * gasPrice;
+    const gasCostEth = isSender ? formatUnits(gasCostWei, 18) : '0.000000000000000000';
 
-  
-    // Add failed txs with 0 value, but keep the gas cost
     const isFailed = tx.isError === '1';
-  
+    const rawValue = isFailed ? '0' : tx.value;
+
+    const valueEth = formatUnits(BigInt(rawValue), 18);
+
     records.push({
       hash: tx.hash,
       timestamp: Number(tx.timeStamp),
@@ -70,17 +70,19 @@ async function fetchEvents(cfg, address) {
       direction: isSender ? 'send' : 'receive',
       from: tx.from,
       to: tx.to,
-      value: isFailed
-  ? '0.000000000000000000'
-  : new Decimal(tx.value).div('1e18').toFixed(18),
+      value: valueEth,
       blockNumber: Number(tx.blockNumber),
       gasCost: gasCostEth
     });
   });
-  
 
   // Normalize token transactions
   tokenTxs.forEach(tx => {
+    const rawValue = typeof tx.value === 'string' ? tx.value : tx.value.toString();
+    const decimals = parseInt(tx.tokenDecimal || '18', 10);
+    const wei = BigInt(rawValue);
+    const formatted = formatUnits(wei, decimals);
+
     records.push({
       hash: tx.hash,
       timestamp: Number(tx.timeStamp),
@@ -90,13 +92,12 @@ async function fetchEvents(cfg, address) {
       direction: tx.from.toLowerCase() === address.toLowerCase() ? 'send' : 'receive',
       from: tx.from,
       to: tx.to,
-      value: Number(tx.value) / (10 ** tx.tokenDecimal),
+      value: formatted,
       blockNumber: Number(tx.blockNumber),
       gasCost: ''
     });
   });
 
-  // Sort chronologically
   return records.sort((a, b) => a.timestamp - b.timestamp || a.blockNumber - b.blockNumber);
 }
 
