@@ -5,8 +5,7 @@
 # Ignore dependencies
 node_modules/
 
-# Ignore exports/output
-exportedTransactions/
+
 output/
 
 # Ignore logs and system files
